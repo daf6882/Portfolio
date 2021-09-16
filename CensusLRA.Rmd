@@ -1,0 +1,389 @@
+---
+title: 'Technical Report'
+subtitle: 'Logistic Regression Analysis of US Census Income Data'
+author: "Douglas Fedorczyk"
+date: "6/5/2021"
+output: word_document
+---
+
+```{r, include = FALSE}
+library(tidyverse)
+library(gridExtra)
+library(vcdExtra)
+library(magrittr)
+library(pROC)
+library(boot)
+library(colorspace)
+library(tree)
+```
+
+# Executive Summary
+
+This report examines the US Census income data from 1994. The data was first analyzed to answer the question of whether the interactions between age, sex, and race are important in determining if someone makes more or less than \$50K per year and if so, by how much. Next, the data was analyzed to develop a predictive model in determining whether someone's income is greater than \$50K per year given the set of variables in the data set. In the first part, there was convincing evidence that a model that included interactions was better than a model that included main effects only. This was based on a drop in deviance test with a resulting p-value much less than 0.0001. While the full model showed that not all interactions had significant p-values, the interaction between age and sex was significant with a p-value much less than 0.0001. The second part of the report found that all variables were important in predicting if an individual's income was greater than \$50K per year with an Mean Squared Predictive Error (MSPE) value of 0.1517; using a classification rule of $\hat p = 0.49$. However, this is not to say that all categories within each variable were statistically significant and additional discussion is provided in the conclusion as to what changes could be made to improve the MSPE value.
+
+# Data
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+# Load data
+census <- read.csv("adultData.csv")
+test <- read.csv("adultTest.csv")
+
+# Remove missing values
+census <- census[!(is.na(census$workclass)),]
+census <- census[!(is.na(census$occupation)),]
+census <- census[!(is.na(census$native.country)),]
+test <- test[!(is.na(test$workclass)),]
+test <- test[!(is.na(test$occupation)),]
+test <- test[!(is.na(test$native.country)),]
+
+# Combine both the census and test data for explanatory question
+census2 <- rbind(census, test)
+
+# Update income variable to 1/0 for predict question
+census %<>% mutate(., income = ifelse(income == ">50K", 1, 0))
+test %<>% mutate(., income = ifelse(income == ">50K", 1, 0))
+
+
+# Update native country to 1/0 to indicate whether person is immigrant or natural born citizen
+#census %<>% mutate(., native.country = ifelse(native.country == "US", "US Born", "Foreign Born"))
+#test %<>% mutate(., native.country = ifelse(native.country == "US", "US Born", "Foreign Born"))
+
+# Combine capital gains and capital losses into one variable
+#census2 %<>% mutate(., net.capital = capital.gain - capital.loss)
+#census %<>% mutate(., net.capital = capital.gain - capital.loss)
+#test %<>% mutate(., net.capital = capital.gain - capital.loss)
+
+# Update integer variables to numeric
+census2$age <- as.numeric(census2$age)
+census$age <- as.numeric(census$age)
+census$fnlwgt <- as.numeric(census$fnlwgt)
+census$education.num <- as.numeric(census$education.num)
+census$capital.gain <- as.numeric(census$capital.gain)
+census$capital.loss <- as.numeric(census$capital.loss)
+census$hours.per.week <- as.numeric(census$hours.per.week)
+#census$net.capital <- as.numeric(census$net.capital)
+test$age <- as.numeric(test$age)
+test$fnlwgt <- as.numeric(test$fnlwgt)
+test$education.num <- as.numeric(test$education.num)
+test$capital.gain <- as.numeric(test$capital.gain)
+test$capital.loss <- as.numeric(test$capital.loss)
+test$hours.per.week <- as.numeric(test$hours.per.week)
+#test$net.capital <- as.numeric(test$net.capital)
+```
+
+```{r, include = FALSE}
+# Create some initial plots for explanatory portion
+ggplot(census2, aes(income, age)) + 
+  geom_boxplot(aes(color = sex)) +
+  labs(y = "Age (years)", x = "Income (+/- $50K)", 
+       title = "A look at age, sex, and income.",
+       subtitle = "", caption = "Source: 1994 US Census") +
+  theme_classic() +
+  scale_color_brewer(name = "Sex", palette = "Set1")
+ggsave("sex_boxplot.png", width = 6, height = 4)
+ggplot(census2, aes(income, age)) + 
+  geom_boxplot(aes(color = race)) +
+  labs(y = "Age (years)", x = "Income (+/- $50K)", title = "A look at age, race, and income.", 
+  caption = "Source: 1994 US Census.") +
+  theme_classic() +
+  scale_color_brewer(name = "Race", palette = "Paired")
+ggsave("race_boxplot.png", width = 6, height = 4)
+
+# Create some initial plots for exploratory portion
+ggplot(census2, aes(age, fill = income)) + 
+  geom_histogram(binwidth = 1.0) +
+  labs(y = "Number of Individuals", x = "Age (years)", title = "",
+       caption = "Source: 1994 US Census.") +
+  theme_classic() +
+  scale_fill_brewer(name = "Income", palette = "Set1")
+ggsave("age_hist.png", width = 6, height = 4)
+ggplot(census2, aes(workclass, fill = income)) + 
+  geom_bar(position = "dodge") + 
+  theme_classic() +
+  labs(y = "Number of Individuals", x = "Work Classification", 
+       title = "A look at work class and income.",
+       caption = "Source: 1994 US Census.") +
+  scale_fill_brewer(name = "Income", palette = "Set1") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1.0)) +
+  scale_y_log10()
+ggsave("workclass_barplot.png", width = 6, height = 4)
+ggplot(census2, aes(fnlwgt, fill = income)) + 
+  geom_histogram() +
+  theme_classic() +
+  labs(y = "Number of Individuals", x = "Weighting Factor", 
+       title = "", caption = "Source: 1994 US Census.") +
+  scale_fill_brewer(name = "Income", palette = "Set1") +
+  scale_y_log10() +
+  scale_x_log10()
+ggsave("final_weight_factor_hist.png", width = 6, height = 4)
+census2$education <- factor(census2$education, levels = c("Preschool", "1st-4th", "5th-6th", "7th-8th", 
+                                                          "9th", "10th", "11th", "12th", "HS-grad", 
+                                                          "Some-college", "Assoc-voc", "Assoc-acdm",
+                                                          "Bachelors", "Masters", "Doctorate", 
+                                                          "Prof-school"))
+ggplot(census2, aes(education, fill = income)) + 
+  geom_bar(position = "dodge") + 
+  theme_classic() +
+  labs(y = "Number of Individuals", x = "Education Level", 
+       title = "", caption = "Source: 1994 US Census.") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1.0)) +
+  scale_fill_brewer(name = "Income", palette = "Set1") +
+  scale_y_log10()
+ggsave("education_barplot.png", width = 6, height = 4)
+ggplot(census2, aes(education.num, fill = income)) + 
+  geom_bar(position = "dodge") +
+  theme_classic() +
+  labs(y = "Number of Individuals", x = "Education (years)", 
+       title = "Number of people earning 50K+ increases with years educated.", 
+       caption = "Source: 1994 US Census.") +
+  scale_fill_brewer(name = "Income", palette = "Set1") +
+  scale_y_log10()
+ggsave("education_num_barplot.png", width = 6, height = 4)
+ggplot(census2, aes(marital.status, fill = income)) + 
+  geom_bar(position = "dodge") + 
+  theme_classic() +
+  labs(y = "Number of Individuals", x = "Maritul Status", title = "",
+       caption = "Source: 1994 US Census.") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1.0)) +
+  scale_fill_brewer(name = "Income", palette = "Set1") +
+  scale_y_log10()
+ggsave("marital_status_barplot.png", width = 6, height = 4)
+ggplot(census2, aes(occupation, fill = income)) + 
+  geom_bar(position = "dodge") + 
+  theme_classic() +
+  labs(y = "Number of Individuals", x = "Occupation", title = "",
+       caption = "Source: 1994 US Census.") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1.0)) +
+  scale_fill_brewer(name = "Income", palette = "Set1") +
+  scale_y_log10()
+ggsave("occupation_barplot.png", width = 6, height = 4)
+ggplot(census2, aes(relationship, fill = income)) + 
+  geom_bar(position = "dodge") + 
+  theme_classic() +
+  labs(y = "Number of Individuals", x = "Family Status", title = "",
+       caption = "Source: 1994 US Census.") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1.0)) +
+  scale_fill_brewer(name = "Income", palette = "Set1") +
+  scale_y_log10()
+ggsave("relationship_barplot.png", width = 6, height = 4)
+ggplot(census2) + 
+  geom_bar(aes(x = race, fill = income), position = "dodge") + 
+  theme_classic() + 
+  labs(y = "Number of Individuals", x = "Race", title = "",
+       caption = "Source: 1994 US Census.") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1.0)) +
+  scale_fill_brewer(name = "Income", palette = "Set1") +
+  scale_y_log10()
+ggsave("race_barplot.png", width = 6, height = 4)
+ggplot(census2, aes(sex, fill = income)) + 
+  geom_bar(position = "dodge") +
+  theme_classic() +
+  labs(y = "Number of Individuals", x = "Sex", title = "",
+       caption = "Source: 1994 US Census.") +
+  scale_fill_brewer(name = "Income", palette = "Set1") +
+  scale_y_log10()
+ggsave("sex_barplot.png", width = 6, height = 4)
+ggplot(data = census2, aes(capital.gain, fill = income)) + 
+  geom_histogram() +
+  theme_classic() +
+  scale_y_log10() +
+  scale_fill_brewer(name = "Income", palette = "Set1") +
+  labs(y = "Number of Individuals", x = "Capital Gain", title = "",
+       caption = "Source: 1994 US Census.")
+ggsave("capital_gain_histogram.png", width = 6, height = 4)
+ggplot(data = census2, aes(capital.loss, fill = income)) + 
+  geom_histogram() +
+  theme_classic() +
+  scale_y_log10() +
+  scale_fill_brewer(name = "Income", palette = "Set1") +
+  labs(y = "Number of Individuals", x = "Capital Loss", title = "",
+       caption = "Source: 1994 US Census.")
+ggsave("capital_loss_histogram.png", width = 6, height = 4)
+ggplot(census2, aes(hours.per.week, fill = income)) + 
+  geom_histogram() + 
+  scale_y_log10() +
+  labs(y = "Number of Individuals", x = "Hours Worked per Week", title = "",
+       caption = "Source: 1994 US Census.") +
+  theme_classic() +
+  scale_fill_brewer(name = "Income", palette = "Set1")
+ggsave("hours_per_week_histogram.png", width = 6, height = 4)
+ggplot(census2, aes(native.country, fill = income)) + 
+  geom_bar(position = "dodge") + 
+  scale_y_log10() + 
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1.0), legend.position = "bottom") +
+  labs(y = "Number of Individuals", x = "Native Country", title = "",
+       caption = "Source: 1994 US Census.") +
+  scale_fill_brewer(name = "Income", palette = "Set1")
+ggsave("native_country_barplot.png", width = 7, height = 4)
+```
+
+The data set comes from the following University of California Irvine website, \url{https://archive.ics.uci.edu/ml/datasets/Adult}, which in turn came from the US Census Bureau website from 1994. The intent of the data set was to determine the probability of earning more than \$50K per year using census data. There are 15 variables in total to include the response variable, which indicates if an individual's income is greater than or less than \$50K per year. Other variables included age, working class, a weighting factor, education level, number of years of education, marital status, occupation, familial relationship, race, sex, capital gains, capital losses, hours worked per week, and native country. The variables are self explanatory for the most part with the exception of the weighting factor which was a used as a means by the Census Bureau to account for response bias. The main data file contained 32,561 observations. A second data file was created to validate the predictive model generated from the main data file. This second data file contained the same variables with 16,281 observations. There were three variables that had missing values, working class and occupation, both of which had about 6% of their data missing; while the native country variable had roughly 2% missing. Altogether, the missing values represented less than 10% of the data. As such, it was felt to be low risk to remove the missing values and proceed with the analysis.  
+
+# Analysis & Results
+
+## Explanatory Question
+
+```{r, echo = FALSE}
+# Change income to binary variable
+census2 %<>% mutate(., income = ifelse(income == ">50K", 1, 0))
+
+# Fit logistic regression model with interactions using binomial distribution and logit link
+lrm1 <- glm(data = census2, income ~ age*race*sex, family = binomial(link = "logit"))
+summary(lrm1)
+
+# Fit second logistic regression model using binomial distribution and logit link
+lrm2 <- glm(data = census2, income ~ age + race + sex, family = binomial(link = "logit"))
+summary(lrm2)
+
+lrm3 <- glm(data = census2, income ~ age*race + age*sex + race*sex, family = binomial(link = "logit"))
+summary(lrm3)
+
+# Perform drop in deviance test to compare models
+anova(lrm2, lrm1, test = "Chisq")
+anova(lrm2, lrm3, test = "Chisq")
+anova(lrm3, lrm1, test = "Chisq")
+
+# Coefficients: log-odds scale
+lrm3$coefficients
+
+# 95% confidence intervals log-odds scale
+confint.default(lrm3)
+
+# Coefficients: odds scale
+# exp(lrm3$coefficients)
+```
+
+The first question of interest looked at the interactions between age, sex, and race, to determine if these were significant in determining the odds that a person's income is greater than \$50K per year and if so, how much of an effect does the interaction have. In the Figure below is a box plot showing income versus age where sex is highlighted to indicate the differences between the two sexes across age.  
+
+![](sex_boxplot.png){width="75%"}  
+
+The figure shows there is a slight difference in the median value of males and females who make more than \$50K per year compared to males and females who do not with respect to age. There is a slight difference in the median between males and females who make more than \$50K per year with respect to age as well. A similar plot was also generated for age and race which can be found in the Appendix.  
+
+The two data files were combined in order to use all available data to answer the explanatory question. A logistic regression model was fit using a binomial distribution along with a logit link function. Two-way and three-way interactions were considered between the three variables and a drop in deviance test was used to determine if the interactions were appropriate for the model.  
+
+After fitting a model with two-way interactions, it was found that only the interaction between age and sex was statistically significant. For all other interactions, their respective p-values were greater than the nominal cutoff value of 0.05. In fact, as can be seen in Table 1 below, a good portion of the associated p-values were much greater than 0.05.  
+
+A second model was fit to the data without interaction terms. In Table 2 below it can be seen that most of the individual variables considered were statistically significant based on their associated p-values being much less than 0.0001.  
+
+However, after performing a drop in deviance test, there was convincing evidence in favor of the full model with a rather small p-value of 1.3e-11. This suggested that the full model with the two-way interaction terms was the more appropriate model. Also of note was the AIC value for the two models. The full model had an AIC score of 45,679 while the reduced model had a AIC score of 45,732.  
+
+Three-way interactions were also considered. A drop-in-deviance test was performed between the two-way interaction model and the three-way interaction model and found that the two-interactions model was the more appropriate model with a p-value of 0.9031. Output from the test can be found in the table below.  
+
+[Insert 2-way/3-way DinD test results]
+
+In Table 3 below are the estimates for each of the terms along with their respective 95% confidence interval. From these estimates one can determine the odds ratio for any number of items of interest. For example, if one were to look at the differences between a 30 year old white male and a 30 year old white female, based on the coefficient estimates it can be shown that the 50 year old white male is 2.6 times more likely to make more than \$50K per year than the 30 year old white female. This is illustrated in the equations below. It can be seen that with the additional interaction terms for the 30 year old white male how these impact the equation both with respect to the intercept as well as the slope.
+
+[Insert example between 30 yr old white female and white male]
+
+## Exploratory Question
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, include = FALSE}
+# Initial fit using all variables
+mod1 = glm(income ~ age + workclass + fnlwgt + education.num + marital.status + occupation + relationship + race + sex + hours.per.week + capital.gain + capital.loss + native.country, data = census, family = binomial(link = "logit"))
+summary(mod1)
+
+# Get predictions for model
+pred <- predict.glm(mod1, newdata = test, type="link")
+test$phat <- plogis(pred)
+
+# Start with classifier rule of 0.5 to start and then calculate MSPE:
+ytilde <- ifelse(test$phat >= 0.5, 1, 0)
+(MSPE1 <- mean((ytilde - test$income)^2)) # initial value of 0.1522576
+
+# Use ROC curve to come up with better classifier rule
+png(file="roc_curve.png",
+width = 600, height = 350)
+roc(test$income, test$phat, plot = TRUE)
+dev.off()
+
+# Recalculate variables using updated classification rule
+ytilde2 <- ifelse(test$phat > 0.49, 1, 0)
+(MSPE2 <- mean((ytilde2 - test$income)^2)) 
+# phat = 0.6: MSPE = 0.1552457; phat = 0.4: MSPE = 0.1581009;
+# phat = 0.55: MSPE = 0.152988; phat = 0.51: MSPE = 0.1524568; phat = 0.49: 0.1517264
+# phat = 0.1517264; phat = 0.48: MSPE = 0.1529216
+
+# Fit a classification tree to determine "important" variables
+tr = tree(as.factor(income) ~ age + workclass + fnlwgt + education.num + marital.status + occupation + relationship + race + sex + hours.per.week + capital.gain + capital.loss + native.country, data = census)
+summary(tr)
+plot(tr); text(tr)
+
+# Fit model using tree selected variables
+mod2 = glm(income ~ age + education.num + capital.gain + capital.loss, data = census, 
+           family = binomial(link = "logit"))
+summary(mod2)
+
+# Get predictions for new model
+pred2 <- predict.glm(mod2, newdata = test, type="link")
+test$phat <- plogis(pred2)
+
+# Start with classifier rule of 0.5 to start and then calculate MSPE:
+ytilde3 <- ifelse(test$phat >= 0.5, 1, 0)
+(MSPE3 <- mean((ytilde3 - test$income)^2)) # initial value of 0.1962151
+
+# Use ROC curve to come up with better classifier rule
+png(file="roc_curve2.png",
+width = 600, height = 350)
+roc(test$income, test$phat, plot = TRUE)
+dev.off()
+
+# Recalculate variables using updated classification rule
+ytilde4 <- ifelse(test$phat > 0.49, 1, 0)
+(MSPE2 <- mean((ytilde4 - test$income)^2))
+# phat = 0.4: MPSEE = 0.2021912
+# phat = 0.45: MPSE = 0.1976096
+# phat = 0.6: MPSE = 0.1985392
+# phat = 0.51: MPSE = 0.1968127
+# phat = 0.49: MPSE = 0.1966135
+```
+
+The second question of interest considered how accurately a model could predict if someone earned more than \$50K per year with the given variables. Several exploratory plots were generated to see if there were any patterns among the variables. The figure below is an example displaying the plot of the variable "education.num" along with income split across the several categories. One item of note is that as the number of years of education increases so does the number of people who make more than \$50K per year. Right around 13 years of education does the number of those who make more than \$50K per year start to over take those who do not. These tends to align with education levels of Masters, Doctorate, and professional schooling. The step increase in number of individuals in the middle of the plot is related to high school graduates.   
+
+![](education_num_barplot.png)
+
+The variable “education.num” appeared to reflect the same information as the “education” variable and so it was not included as part of the model fitting process. A naive approach was used to start by including all variables in the model fitting. Most variables were considered to be statistically significant based on their individual p-values. The next step was then to calculate the predictions with the fitted model using the test data. Then a new predicted response variable, $\tilde y$, was calculated using a classification rule of 0.5 as a starting point from which an MSPE value of 0.15226 was calculated. The following ROC curve was generated to check if the $\hat p$ value seemed like a good classification rule for this model. As can be seen, 0.5 seemed like a reasonable value; however, other values were checked against the model to see if any improvement could be made. Other $\hat p$ values included 0.6 and 0.4, both of which did not improve upon 0.5. The model was tuned a bit more until it was discovered that 0.49 was the best classification rule based on having the lowest MSPE of 0.15172.
+
+![ROC Curve](roc_curve.png)
+
+Further investigation into reducing MSPE included using a classification tree. Starting with all the variables, the classification tree determined that the most important variables were "capital.gain," "age," "education.num," and "capital.loss" which is illustrated in the plot below. One of item of note with the tree diagram is the split for years of education. The classification found a split at 12.5 years of schooling to be important which corresponds well with the figure detailing the number of individuals and years of education above. However, the misclassification error rate associated with the classification tree was 0.1914, which was higher than the aforementioned model. At this point, it was decided that the MSPE of 0.15172 using a naive approach with the logistic regression model was the lowest achievable.   
+
+# Conclusions/Discussion
+
+In the explanatory portion of this report, age, race, and sex were considered in terms of how they relate to an individual's income being greater than \$50K. It was found that between a model with main effects only and a model with two-way interaction terms, the model with the interaction terms was the more appropriate model even though the individual terms were found to be less significant. Additionally, three-way interactions were also considered and found to be statistically insignificant compared to the two-way interactions model. This was determined by performing a drop in deviance test for all three models. Lastly, the example provided between the 30 year old white female and 30 year white male illustrated how these interaction terms can impact a model by adding or subtracting from the intercept and slope of the model.    
+
+The exploratory analysis looked at which variables were statistically significant in predicting if an individual’s income was greater than \$50K per year. When determining which variables seemed to be statistically significant in predicting a person’s income, it was found that to a certain degree all the variables were statistically significant. However, there were certain levels for each of the categorical variables that were not statistically significant. This is believed to play a part in the MSPE value being 0.1517 given a classification value of $\hat p = 0.49$. While the MSPE value was not terrible, there may be ways that it can be improved upon such as combining terms, data transformations, or using quadratic terms. Interestingly enough, even though the classification tree resulted in a higher error result, it did show that most of the predictive capability could be found with just four variables.  
+
+# Appendix
+
+## Additional Figures
+
+### Explanatory Analysis
+
+![](race_boxplot.png)
+
+### Exploratory Analysis
+
+![](age_hist.png)
+
+![](final_weight_factor_hist.png)
+
+![](education_barplot.png)
+
+![](education_num_barplot.png)
+
+![](marital_status_barplot.png)
+
+![](occupation_barplot.png)
+
+![](relationship_barplot.png)
+
+![](race_barplot.png)
+
+![](sex_barplot.png)
+
+![](capital_gain_histogram.png)
+![](capital_loss_histogram.png)
+![](hours_per_week_histogram.png)
+
+![](native_country_barplot.png)
