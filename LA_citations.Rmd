@@ -1,0 +1,264 @@
+---
+title: 'ST537: Data Visualization'
+subtitle: 'Assignment 4'
+author: "Douglas Fedorczyk"
+date: "6/9/2021"
+output: pdf_document
+---
+
+Questions to think about:
+1. Are parking violations cyclical? Is there a time of year, or season, when there are more parking violations? My guess is that there are more in the summer time.
+2. Is there a time of day that more parking violations are committed? My guess would be around lunch time.
+3. Which agency tends to write the most tickets? Is there a particular time of year, i.e. month, day, time?
+4. What is the most common violation?
+5. What is the most common fine amount?
+
+```{r}
+# Get libraries
+library(tidyverse)
+library(lubridate)
+library(hms)
+library(patchwork)
+library(colorspace)
+library(forcats)
+
+# Read in data
+LAcitations <- read.csv('parking-citations.csv')
+
+# Turn it into a tibble
+citations <- as.data.frame(LAcitations)
+
+# Select what we're going to work with
+citations <- citations %>%
+  select(Issue.Date, Issue.time, Agency, Violation.code, Fine.amount)
+# Comment1: Too many Makes and Colors to sort through, not sure how helpful these two are going to be
+
+# Get rid of missing data
+citations <- citations %>%
+  filter(!is.na(Issue.Date), !is.na(Issue.time), !is.na(Agency),
+         !is.na(Violation.code), !is.na(Fine.amount))
+# Comment1: not that much all things considered
+# Comment2: need to do this step after formatting
+
+# Reformat date and time, and brake out years, months and weekdays
+citations$Issue.Date <- as_date(citations$Issue.Date)
+citations <- citations %>% mutate(Issue.time, 
+                                  hour = Issue.time %/% 100, 
+                                  minute = Issue.time %% 100)
+citations <- citations %>% mutate(year = year(Issue.Date),
+                                  month = month(Issue.Date, label = TRUE),
+                                  wday = wday(Issue.Date, label = TRUE))
+
+citations <- citations %>%
+  filter(!is.na(Issue.Date), !(year < 2019), !(year > 2019),
+         !is.na(month), !is.na(wday))
+# comment1: going to keep this between 2015 and 2019 since that appears to be the best data; before 2015 is sparse, 2020 had covid, and 2021 only has 4 months of data
+
+citations <- citations %>%
+  filter(!(Fine.amount < 25))
+
+citations$Agency <- as.factor(citations$Agency)
+
+citations$wday <- factor(citations$wday, 
+  levels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))
+
+# Let's do some plotting
+# ggplot(citations) +
+#   geom_bar(aes(Fine.amount)) +
+#   scale_y_log10() +
+#   scale_x_log10()
+# comment1: doing a barplot of fines didn't do much, maybe adjust the scales
+# comment2: I wonder if a histogram would be better
+
+# ggplot(citations) +
+#   geom_histogram(aes(Fine.amount), binwidth = 1) +
+#   scale_y_log10()
+# comment1: this okay, but the $1,000 fines are making things tough to read
+
+# Let's see what months of the year look like
+# ggplot(citations) +
+#   geom_bar(aes(month))
+# comment1: interesting, looks like people tend to commit parking violations more during the Winter
+
+# ggplot(citations) +
+#   geom_bar(aes(wday))
+# comment1: more parking violations during the week, by a lot, which seems to be expected
+
+# Let's look at the previous versus fine amount
+# ggplot(citations) +
+#   geom_col(aes(wday, Fine.amount))
+# comment1: need to figure out why Fines are being totaled
+
+# ggplot(citations) +
+#   geom_col(aes(month, Fine.amount))
+# comment1: really annoying that fines are being totaled
+
+# ggplot(citations) +
+#   geom_bar(aes(year))
+
+# Let's see if a boxplot looks any better
+# ggplot(citations) +
+#   geom_boxplot(aes(month, Fine.amount))
+# comment1: meh, pretty much in any given month people are going to get hit with similar parking tickets
+
+# ggplot(citations) +
+#   geom_bar(aes(Agency)) +
+#   scale_y_log10() +
+#   coord_flip()
+
+# ggplot(citations) +
+#   geom_point(aes(hour, Fine.amount))
+# comment1: I'm starting to wonder if having too much data is impacting my ability to find something interesting
+
+# ggplot(citations) +
+#   geom_bar(aes(hour))
+# comment1: this is a little bit more fun; why are people cited more at 8, 10, and 12
+
+# ggplot(citations) +
+#   geom_col(aes(hour, Fine.amount))
+# comment1: pretty much the same as above except this has total amount
+
+# ggplot(citations) +
+#   geom_tile(aes(hour, wday, fill = Fine.amount))
+# comment1: let's see what happens when I add in a facet_wrap with year
+
+# ggplot(citations) +
+#   geom_tile(aes(hour, wday, fill = Fine.amount)) +
+#   facet_wrap(~year)
+# comment1: while I do like this one, I think I'm going to do the number of citations as oppose to fine amount. I feel like it's hard to discern what the graphic is saying.
+# comment2: I think I'm going to find the average fine amount per day and calculate the difference for each hour
+# comment3: On second thought, I'm going to find the total number of tickets issued per hour, and then the average fine. I'll make two plots, one will have the number issued per hour, and the second will be the average fine amount per hour
+
+# hourly <- citations %>%
+#   group_by(year, month, wday, hour) %>%
+#   summarise(
+#     n = n(),
+#     fine_med = median(Fine.amount),
+#     fine_IQR = IQR(Fine.amount))
+# 
+# hourly <- hourly %>% filter(!(year < 2015))
+# 
+# hourly <- hourly %>% filter(!(year > 2019))
+# 
+# p1 <- ggplot(hourly) +
+#   geom_tile(aes(hour, wday, fill = count)) +
+  # scale_x_continuous("Time of Day",
+  #                    breaks = c(0, 3, 6, 9, 12, 15, 18, 21),
+  #                    labels = c("12am", "3am", "6am", "9am", "12pm", "3pm", "6pm", "9pm"),
+  #                    expand = c(0,0),
+  #                    limits = c(0,23)) +
+  # scale_y_discrete("Day of the Week") +
+  # scale_fill_continuous_sequential(
+  #   name = "Number of \nCitations",
+  #   palette = "OrRd",
+  #   breaks = c(0, 1500, 3000, 4500, 6000),
+  #   limits = c(0, 6500),
+  #   labels = c("0", "1500", "3000", "4500", "6000"),
+  #   expand = c(0,0),
+  #   guide = "colorbar") +
+#   labs(title = "Watch where you park in LA weekday mornings.") +
+#   guides(color = "None") +
+#   theme_classic() +
+#   theme(axis.ticks.y = element_blank(), axis.line.y = element_blank()) +
+#   coord_equal()
+# 
+# p1
+# 
+# p2 <- ggplot(hourly) +
+#   geom_tile(aes(month, wday, fill = count)) +
+  # scale_x_continuous("Time of Day",
+  #                    breaks = c(0, 3, 6, 9, 12, 15, 18, 21),
+  #                    labels = c("12am", "3am", "6am", "9am", "12pm", "3pm", "6pm", "9pm"),
+  #                    expand = c(0,0),
+  #                    limits = c(0,23)) +
+  # scale_y_discrete("Day of the Week") +
+  # scale_fill_continuous_sequential(
+  #   name = "Avg Fine",
+  #   palette = "OrRd",
+  #   breaks = c(0, 50, 100, 150),
+  #   limits = c(0, 150),
+  #   labels = c("0", "50", "100", "150"),
+  #   expand = c(0,0),
+  #   guide = "colorbar") +
+#   labs(title = "If you do get cited, expect to pay between $50 and $100.",
+#        caption = "Based on parking citations in Los Angeles between 2015 and 2019") +
+#   guides(color = "None") +
+#   theme_classic() +
+#   theme(axis.ticks.y = element_blank(), axis.line.y = element_blank()) +
+#   coord_equal()
+# 
+# p2
+# 
+# p1 / p2
+# 
+# ggsave("parking_heatmap.png", height = 6, width = 6)
+
+# Comment1: These aren't bad, but seem kind of boring
+# Comment2: Title: 
+
+p3 <- ggplot(citations) +
+        geom_count(aes(wday, Fine.amount)) +
+        scale_y_log10() +
+        scale_x_discrete(limits = rev(levels(citations$wday))) +
+        labs(y = "Fine Amount ($)", x = "Day of the Week",
+             title = "Make sure you follow all vehicle laws in LA, it could cost you...") +
+        scale_size_continuous("No. of\nCitations\n(,000s)",
+                              breaks = c(5000, 25000, 50000, 100000),
+                              labels = c("5", "25", "50", "100")) +
+        coord_flip() +
+        theme_classic()
+
+p4 <- ggplot(citations) +
+        geom_count(aes(hour, wday)) +
+        scale_x_continuous(breaks = c(0, 3, 6, 9, 12, 15, 18, 21),
+                           labels = c("12am", "3am", "6am", "9am", "12pm", "3pm", "6pm", "9pm")) +
+        scale_y_discrete(limits = rev(levels(citations$wday))) +
+        labs(x = "Time of Day", y = "Day of the Week",
+             subtitle = "...especially weekday mornings.",
+             caption = "Based on parking citations in Los Angeles in 2019.") +
+        scale_size_continuous("No. of\nCitations\n(,000s)",
+                              breaks = c(5000, 10000, 25000, 50000),
+                              labels = c("5", "10", "25", "50")) +
+        theme_classic()
+
+p3 / p4
+
+ggsave("fine_citations.png")
+
+violations <- group_by(citations, Violation.code) %>%
+                summarise(unique(Violation.code), n = n()) %>%
+                arrange(desc(n))
+
+most_common_10 <- violations[1:10,]
+most_common_10$Violation.code <- factor(most_common_10$Violation.code, 
+                                        levels = most_common_10[order(most_common_10$n,
+                                                                      decreasing = F),]$Violation.code)
+most_common_10$Fine <- c("No Parking/Street Cleaning, $73",
+                         "Meter Expired, $63",
+                         "Red Zone, $93",
+                         "Preferential Parking, $68",
+                         "Display of Tabs, $25",
+                         "No Parking, $73",
+                         "Display of Plates, $25",
+                         "Parked over Time Limit, $58",
+                         "White Zone, $58",
+                         "No Stopping/Standing, $93")
+
+fines <- group_by(citations, Fine.amount, Violation.code) %>%
+            summarise(unique(Fine.amount), n = n()) %>%
+            arrange(desc(Fine.amount))
+
+p5 <- ggplot(most_common_10) +
+        geom_col(aes(Violation.code, n)) +
+        geom_text(aes(Violation.code, n, label = Fine, hjust = 1.1), color = "white") +
+        scale_y_log10() +
+        coord_flip() +
+        labs(x = "Violation Code", y = "Number of Violations",
+             title = "10 Most Common Parking Citations") +
+        theme_classic()
+
+p5
+
+ggsave("top_ten.png")
+```
+
