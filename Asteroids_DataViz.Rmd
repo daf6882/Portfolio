@@ -1,0 +1,204 @@
+---
+title: 'Assignment 3 - Exploration'
+author: "Douglas Fedorczyk"
+output: word_document
+---
+
+## Introduction
+
+The three graphics contained herein are a testament to the shear number of asteroids contained within our solar system. While the dataset I found came from kaggle, the data itself comes from NASA JPL’s Small-Body Database Search Engine. There were many variables contained in this dataset but the ones that were of particular interest to me were the asteroid classes, the size and inclination of their orbits, and whether they are potentially hazardous objects, i.e. objects that could collide with Earth.
+
+## 1. There are a lot of asteroids out there.
+
+I never really grasped just how many asteroids there were until I started working with this dataset. In the graphic below, there are each of the asteroid classes along with the number of asteroids that reside within that class; which are mostly defined based on their distance from the sun.
+
+![](asteroid_barplot.png)
+
+## 2. Larger asteroids tend to exist farther out in the solar system.
+
+The next graphic depicts the number of asteroids with known diameters (~16%). It appears that larger asteroids exist farther out in our solar system, but we also have less data the farther out we get. And it may be that it's harder to spot the smaller ones. 
+
+![](asteroid_boxplot.png)
+
+## 3. Potentially Hazardous Asteroids are not that big, relatively speaking, but are still pretty big.
+
+What I found most interesting about this graphic was that the potentially hazardous asteroids (PHAs) are still pretty big. It made me curious about how big the asteroid that caused the demise of the dinosaurs was, which is estimated to be about 10 km in diameter. 
+
+![](asteroid_scatterplot.png)
+
+```{r, eval = FALSE, echo = FALSE}
+# Initial curiosities regarding asteroids:
+
+# 1. Of the asteroids with known diameters, where do most of them reside? 
+# 2. What are the ranges of diameter for near earth objects?
+# 3. How big are the potentially hazardous asteroids? Are they only near earth objects?
+
+# Revisiting initial curiosities:
+# The first questions seems kind of mundane in retrospect, as it became clear pretty quickly that of all the known asteroids with documented diameters, most of them reside within the asteroid belt. But, it got me thinking that maybe a better way to approach this would be to compare asteroids with known diameters to ones without, and see if that changes anything. On second thought, I think maybe a better approach, and to sort of have an overarching theme, would be to show the numbers for each class of asteroid and how many are potentially hazardous.
+
+# The second question is not as bad as the first, but seems kind of easy to determine. Instead, I think combining the initial first and second question to show the ranges for all of the different classes along with the potentially hazardous ones; then order them based on their respective medians.
+
+# The last one is a little more interesting because we can see that asteroids don't necessarily need to be Near-Earth objects to be potentially hazardous. Although it seems like we shouldn't necessarily assume that, it's nice to confirm. Rereading that first sentence and realizing that's not correct as the NEOs incorporate the PHAs. I'm going to add a note to the first graphic about which classes are included as a Near-Earth Objects.
+
+# Revised question:
+# 2. Of the asteroids with known diameters, which class tends to be the largest?
+
+library(tidyverse)
+library(colorspace)
+
+# Read in the dataset
+asteroid <- read.csv("Asteroid_Updated.csv")
+
+# Change diameter to numeric
+asteroid$diameter <- as.numeric(asteroid$diameter)
+
+# How many NAs are there in the diameter variable?
+mean(is.na(asteroid$diameter))
+# About 84% of the asteroids don't have a diameter listed
+
+# Want to focus on most asteroid classes except parabolic, hyperbolic, and other
+asteroid <- subset(asteroid, !(class == "PAA" | class == "HYA" | class == "AST"), select = c(name:ma))
+
+# Let's subset on the diameter attribute and work with a smaller dataset
+astro_sub <- subset(asteroid, !is.na(diameter), select = c(name:ma))
+
+# With the smaller subset, what is the class makeup?
+# ggplot(astro_sub) +
+#  geom_bar(aes(class)) +
+#  scale_y_log10()
+# comment: mostly asteroid belt, but that's to be expected
+
+# Which class of asteroid tends to have the largest diameters?
+ggplot(astro_sub) +
+  geom_boxplot(aes(x = reorder(class, diameter, FUN = median), y = diameter, fill = pha)) +
+  scale_y_log10() +
+  labs(x = "Asteroid Class", y = "Asteriod Diameter (km)",
+       title = "Bigger asteroids tend to exist farther out in space...",
+       subtitle = "...but it may be really hard to spot the smaller ones.") +
+  scale_fill_discrete_sequential(palette = "OrYel", name = "Hazardous",
+                                 labels = c("No", "Yes"),
+                                 guide = guide_legend(reverse = TRUE)) +
+  theme_dark()
+ggsave("asteroid_boxplot.png", height = 4, width = 6)
+# comment: while the main belt asteroids tend to have some of the largest diameters, the TransNeptunian Objects (TNO) have the largest median diameter; at the same time there's only a little more than 10 TNOs, while there are roughly 10,000 MBAs.
+# comment2: Added color based on potentially hazardous ones. Using the median is kind of bothering me, I'm curious if the mean helps in any way.
+# comment3: Using the mean didn't really do anything, not sure why I thought it would. I'll just leave it as is with the median
+
+# What sort of semi-major axis do asteriods of various sizes have?
+# comment: should use a log-log scale since most objects reside in the asteroid belt
+# ggplot(astro_sub) +
+#  geom_point(aes(a, diameter)) +
+#  facet_wrap(~class) +
+#  scale_x_log10() +
+#  scale_y_log10()
+# comment: interesting that we've cataloged some asteroids that are pretty far out there
+
+# Moving onto Near Earth Objects (NEOs)
+# neo_sub <- subset(astro_sub, neo == "Y", select = c(name:ma))
+# What range of diameters do NEOs have?
+# ggplot(neo_sub) +
+#  geom_histogram(aes(diameter), binwidth = 1)
+# comment: seem most are pretty small but there are a few that are larger than 10 km
+
+# Let's see the potentially hazardous asteroids (PHAs)
+pha_sub <- subset(astro_sub, pha == "Y", select = c(name:ma))
+# ggplot(pha_sub) +
+#  geom_histogram(aes(diameter), binwidth = 0.5)
+# comment: most seem to be smaller than what killed off the dinosaurs, but some are still kind of big nonetheless
+
+# What does the moid look like for some of these diameters?
+# ggplot(pha_sub) +
+#  geom_point(aes(moid, diameter))
+
+# And inclination?
+# ggplot(pha_sub) +
+#  geom_point(aes(moid, i, size = diameter))
+# comment: there's a lot more variation in inclination than I would have expected
+# comment2: adding size based on diameter you can see that it's pretty random as far as inclination and size is concerned
+
+# And eccentricity?
+# ggplot(pha_sub) +
+#  geom_point(aes(moid, e, size = diameter))
+# comment: nothing of note here
+
+# What about eccentricity and inclination?
+# ggplot(pha_sub) +
+#  geom_point(aes(e, i, size = diameter))
+# comment: doesn't appear to be any pattern here with inclination and eccentricity
+
+# Now I'm curious about the other asteroid classes...
+# ggplot(astro_sub) +
+#   geom_point(aes(e, i, size = diameter)) +
+#  facet_wrap(~class)
+# comment: this is somewhat more interesting; most asteroid classes inclinations are at roughly 50 degrees and below, except for Centaur class and TransNeptunian classes, which is to say that we see more inclined orbits the farther out we get
+
+# Now let's drop the class and look strictly at semi-major axis
+# ggplot(astro_sub) +
+#  geom_point(aes(a, i, size = diameter, color = pha)) +
+#  scale_x_log10()
+# comment: as we get pass the asteroid belt we start to see more variation in the inclination; I would be curious to know why that might be
+# comment2: need to change the x-axis to log scale since most of the asteroids reside in the asteroid belt
+# comment3: going back to one of the original questions, lets add some color based on pha flag
+
+# Now realizing I shouldn't have subset pha asteroids from neo asteroids
+# pha_sub <- subset(astro_sub, pha == "Y", select = c(name:ma))
+
+# Let's recreate the same plot above again, except this time with pha asteroids only
+ggplot(pha_sub) +
+  geom_point(aes(a, i, size = diameter, color = class)) +
+  geom_vline(xintercept = 1.0) +
+  annotate(geom = "text",
+           label = "Earth",
+           x = 1.0,
+           y = 60,
+           angle = 90,
+           vjust = 1) +
+  labs(x = "Semi-major Axis (au)", y = "Inclination (degrees)",
+       title = "Smaller asteroids are still pretty big though.",
+       subtitle = "Potentially Hazardous Asteroids",
+       caption = "Vertical line is an approximation of Earth's orbit.
+       Inclination relative to ecliptic plane.
+       Asteroid classes differ based on semi-major axis and perihelion.") +
+  scale_size_continuous(name = "Diameter\n(km)") +
+  scale_color_discrete_sequential(palette = "OrYel", name = "Asteroid\nClass",
+                                  guide = guide_legend(reverse = TRUE)) +
+  theme_dark()
+ggsave("asteroid_scatterplot.png", height = 4, width = 6)
+# comment: I really like this plot as it gives us a pretty good visual of the pha's along with their size, distance, and inclination
+# comment2: After reading up on distance, I discovered that Near-Earth objects are further differentiated based on the perihelion distance. So instead of using semi-major axis I'm going to use perihelion as the measure of distance. 
+# comment3: I'm not sure if I like that now. Maybe instead, I'll use semi-major axis, but employ some color based on class.
+
+# Now I want to revisit all of the asteroids and see which class houses the most?
+asteroid$class <- factor(asteroid$class, levels = c("IEO", "ATE", "APO", "AMO", "MCA", "IMB", "MBA", 
+                                                    "OMB", "TJN", "CEN", "TNO"))
+ggplot(asteroid) +
+  geom_bar(aes(class, fill = pha)) +
+  geom_vline(xintercept = c(2.5, 4.5, 8.5, 10.5)) +
+  annotate(geom = "text",
+           label = c("Earth", "Mars", "Jupiter", "Neptune"),
+           x = c(2.5, 4.5, 8.5, 10.5),
+           y = c(3e9, 3e9, 3e9, 3e9),
+           angle = 90,
+           vjust = 1) +
+  scale_y_log10() +
+  scale_fill_discrete_sequential(palette = "OrYel",
+                                 name = "Potentially\nHazardous",
+                                 labels = c("No Data", "No", "Yes"),
+                                 guide = guide_legend(reverse = TRUE)) +
+  labs(x = "Asteroid Class", y = "Number of Asteroids",
+       title = "Asteroids are a plenty.", 
+       subtitle = "From NASA JPL's Small-Body Database Search Engine",
+       caption = "Vertical lines represent orbits in association with asteroid classes.
+       IEO, ATE, APO, and AMO classes represent Near-Earth Objects (NEOs).
+       Asteroids classified as parabolic, hyperbolic or other not included.") +
+  theme_dark() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+ggsave("asteroid_barplot.png", height = 4, width = 6)
+# comment: Okay, most of the known asteroids, regardless of diameter, do reside within the asteroid belt.
+# comment2: After resetting the y-axis to log scale we can see the numbers associated with a lot of the other classes. Now I want to fill the bars based on potentially hazardous ones.
+# comment3: Fill based on hazardous ones, was not expecting a missing values, I suppose in hindsight I should have been. Now I want to reorder them based on distance.
+# comment4: The hyperbolic orbits caught be off guard with their negative numbers. At the same time, there appears to be some overlap with the inner asteroid belt along with some of the other orbits. Turns out there's another differentiater, perihelion, i.e. its closest distance to the sun. So now I'm thinking of dropping the hyperbolic and parabolic orbits, and reordering mostly on distance but also accounting for their perihelion.
+# comment5: Nevermind, I'm going to leave hyperbolic and parabolic, but manually reorder based on distance from the Sun
+```
+
